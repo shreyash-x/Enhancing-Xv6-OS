@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
 
     if (argc < 3)
     {
-        fprintf(2, "%s: Invalid Syntax\n", argv[0]);
+        fprintf(1, "%s: Invalid Syntax\n", argv[0]);
         exit(1);
     }
     else
@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
         {
             if (argv[1][i] < '0' || argv[1][i] > '9')
             {
-                fprintf(2, "%s: Invalid value for mask (%s) - Must be an integer\n", argv[0], argv[1]);
+                fprintf(1, "%s: Invalid value for mask (%s) - Must be an integer\n", argv[0], argv[1]);
                 exit(1);
             }
         }
@@ -26,7 +26,7 @@ int main(int argc, char *argv[])
 
     if (trace(atoi(argv[1])) == -1)
     {
-        fprintf(2, "%s: Some Error Occured\n", argv[0]);
+        fprintf(1, "%s: Some Error Occured\n", argv[0]);
     }
 
     int k = 0;

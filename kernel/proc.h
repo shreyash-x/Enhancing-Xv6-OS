@@ -119,4 +119,15 @@ struct proc
   char name[16];               // Process name (debugging)
   int mask;
   uint64 reg_args[10];
+  int t_sleep;
+  int t_start;
+
+  int static_priority;
+  int dynamic_priority;
+  int niceness;
+  int times_scheduled;
+
+  uint rtime; // How long the process ran for
+  uint ctime; // When was the process created
+  uint etime; // When did the process exited
 };
