@@ -80,8 +80,18 @@ void usertrap(void)
 
 // give up the CPU if this is a timer interrupt.
 #ifndef FCFS
+    // give up the CPU if this is a timer interrupt.
+#ifndef MLFQ
   if (which_dev == 2)
     yield();
+#endif
+#ifdef MLFQ
+  if (which_dev == 2)
+  {
+    update_queue_level();
+  }
+#endif
+
 #endif
 
   usertrapret();
@@ -154,8 +164,17 @@ void kerneltrap()
 
 #ifndef FCFS
   // give up the CPU if this is a timer interrupt.
+#ifndef MLFQ
   if (which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
     yield();
+#endif
+#ifdef MLFQ
+  if (which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
+  {
+    update_queue_level();
+  }
+#endif
+
 #endif
 
   // the yield() may have caused some traps to occur,

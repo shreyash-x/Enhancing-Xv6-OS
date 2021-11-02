@@ -32,6 +32,9 @@ int main(void)
 #ifdef PBS
   fprintf(1, "Priority Based Scheduling...\n");
 #endif
+#ifdef MLFQ
+  fprintf(1, "Multi-Level Feedback Queue Scheduling...\n");
+#endif
 
   for (;;)
   {

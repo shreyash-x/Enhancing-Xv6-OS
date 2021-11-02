@@ -11,6 +11,7 @@ struct cpu cpus[NCPU];
 struct proc proc[NPROC];
 
 struct proc *initproc;
+struct queue Queues[5];
 
 int nextpid = 1;
 struct spinlock pid_lock;
@@ -46,6 +47,12 @@ void proc_mapstacks(pagetable_t kpgtbl)
 // initialize the proc table at boot time.
 void procinit(void)
 {
+  for (int i = 0; i < 5; i++)
+  {
+    Queues[i].start = 0;
+    Queues[i].end = 0;
+    Queues[i].size = 0;
+  }
   struct proc *p;
 
   initlock(&pid_lock, "nextpid");
@@ -132,6 +139,16 @@ found:
   p->etime = 0;
   p->ctime = ticks;
   p->t_start = 0;
+  p->queue_level = 0;
+  p->queue_change = 1 << p->queue_level;
+  p->is_in_queue = 0;
+  p->queue_ctime = ticks;
+  p->n_run = 0;
+  p->q_tspent[0] = 0;
+  p->q_tspent[1] = 0;
+  p->q_tspent[2] = 0;
+  p->q_tspent[3] = 0;
+  p->q_tspent[4] = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0)
@@ -334,6 +351,10 @@ int fork(void)
   np->mask = p->mask;
   release(&np->lock);
 
+  // #ifdef MLFQ
+  //   yield();
+  // #endif
+
   return pid;
 }
 
@@ -477,6 +498,33 @@ int minimum(int a, int b)
     return a;
 }
 
+void ageing()
+{
+  int age_lim = 64;
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++)
+  {
+    acquire(&p->lock);
+    if (p->state == RUNNABLE && ticks - p->queue_ctime >= age_lim)
+    {
+      if (p->is_in_queue)
+      {
+        delete (&Queues[p->queue_level], p->pid);
+        p->is_in_queue = 0;
+      }
+      if (p->queue_level == 0)
+      {
+      }
+      else
+      {
+        p->queue_level--;
+      }
+      p->queue_ctime = ticks;
+    }
+    release(&p->lock);
+  }
+}
+
 void scheduler(void)
 {
   struct proc *p;
@@ -556,6 +604,8 @@ void scheduler(void)
     struct proc *scheduled_process = 0;
     for (p = proc; p < &proc[NPROC]; p++)
     {
+      p->niceness = (p->t_sleep * 10) / (p->rtime + p->t_sleep);
+      p->dynamic_priority = maximum(0, minimum(p->static_priority - p->niceness + 5, 100));
       if (p->state == RUNNABLE)
       {
         scheduled = 1;
@@ -574,9 +624,6 @@ void scheduler(void)
         {
           scheduled_process = p;
         }
-
-        p->niceness = (p->t_sleep * 10) / (p->rtime + p->t_sleep);
-        p->dynamic_priority = maximum(0, minimum(p->static_priority - p->niceness + 5, 100));
       }
     }
 
@@ -601,6 +648,77 @@ void scheduler(void)
       release(&scheduled_process->lock);
     }
 
+#endif
+#ifdef MLFQ
+    // printf("Entered MLFQ\n");
+    ageing();
+    int scheduled = 0;
+    struct proc *scheduled_process = 0;
+    for (p = proc; p < &proc[NPROC]; p++)
+    {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE && p->is_in_queue == 0)
+      {
+        enqueue(&Queues[p->queue_level], p);
+        p->is_in_queue = 1;
+      }
+      release(&p->lock);
+    }
+    for (int i = 0; i < 5; i++)
+    {
+      while (Queues[i].size > 0)
+      {
+        struct proc *temp = get_start(&Queues[i]);
+        // if (temp == 0)
+        // {
+        //   break;
+        // }
+        dequeue(&Queues[i]);
+        // printf("going in\n");
+        acquire(&temp->lock);
+        temp->is_in_queue = 0;
+        if (temp->state == RUNNABLE)
+        {
+          temp->queue_ctime = ticks;
+          scheduled_process = temp;
+          scheduled = 1;
+          // release(&temp->lock);
+          // break;
+          // printf("aa\n");
+          // goto abc;
+        }
+        // printf("going out\n");
+        release(&temp->lock);
+      }
+    }
+    // abc:
+    if (scheduled == 1)
+    {
+      // printf("going in1\n");
+      acquire(&scheduled_process->lock);
+      if (scheduled_process != 0 && scheduled_process->state == RUNNABLE)
+      {
+
+        // Switch to chosen process.  It is the process's job
+        // to release its lock and then reacquire it
+        // before jumping back to us.
+        scheduled_process->queue_change = 1 << scheduled_process->queue_level;
+        scheduled_process->state = RUNNING;
+        scheduled_process->t_start = ticks;
+        c->proc = scheduled_process;
+        p->queue_ctime = ticks;
+        p->n_run++;
+        swtch(&c->context, &scheduled_process->context);
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        p->queue_ctime = ticks;
+        c->proc = 0;
+        // printf("test\n");
+      }
+      release(&scheduled_process->lock);
+      // printf("going out1\n");
+    }
 #endif
   }
 }
@@ -780,6 +898,7 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 // No lock to avoid wedging a stuck machine further.
 void procdump(void)
 {
+#ifdef PBS
   static char *states[] = {
       [UNUSED] "unused",
       [SLEEPING] "sleeping ",
@@ -798,9 +917,33 @@ void procdump(void)
       state = states[p->state];
     else
       state = "???";
-    printf("%d %s %s", p->pid, state, p->name);
+    printf("%d\t%d\t%s\t%d\t%d\t%d", p->pid, p->dynamic_priority, state, p->rtime, ticks - p->ctime - p->rtime, p->times_scheduled);
     printf("\n");
   }
+#endif
+#ifdef MLFQ
+  static char *states[] = {
+      [UNUSED] "unused",
+      [SLEEPING] "sleeping ",
+      [RUNNABLE] "runnable",
+      [RUNNING] "running",
+      [ZOMBIE] "zombie"};
+  struct proc *p;
+  char *state;
+
+  printf("\n");
+  for (p = proc; p < &proc[NPROC]; p++)
+  {
+    if (p->state == UNUSED)
+      continue;
+    if (p->state >= 0 && p->state < NELEM(states) && states[p->state])
+      state = states[p->state];
+    else
+      state = "???";
+    printf("%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d", p->pid, p->dynamic_priority, state, p->rtime, ticks - p->ctime - p->rtime, p->times_scheduled, p->q_tspent[0], p->q_tspent[1], p->q_tspent[2], p->q_tspent[3], p->q_tspent[4]);
+    printf("\n");
+  }
+#endif
 }
 
 // Wait for a child process to exit and return its pid.
@@ -866,11 +1009,27 @@ void update_time()
     acquire(&p->lock);
     if (p->state == RUNNING)
     {
-
+      p->q_tspent[p->queue_level]++;
       p->rtime++;
+      p->queue_change--;
     }
     release(&p->lock);
   }
+}
+
+void update_queue_level()
+{
+  struct proc *p = myproc();
+  // acquire(&p->lock);
+  if (p->queue_change <= 0)
+  {
+    if (p->queue_level + 1 != 5)
+    {
+      p->queue_level++;
+    }
+    yield();
+  }
+  // release(&p->lock);
 }
 
 int set_priority(int priority, int pid)

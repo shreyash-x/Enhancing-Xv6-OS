@@ -93,6 +93,14 @@ enum procstate
   ZOMBIE
 };
 
+struct queue
+{
+  struct proc *q_array[NPROC + 1];
+  int size;
+  int start;
+  int end;
+};
+
 // Per-process state
 struct proc
 {
@@ -127,7 +135,19 @@ struct proc
   int niceness;
   int times_scheduled;
 
+  int queue_level;
+  int is_in_queue;
+  int n_run;
+  int queue_ctime;
+  int q_tspent[5];
+  int queue_change;
+
   uint rtime; // How long the process ran for
   uint ctime; // When was the process created
   uint etime; // When did the process exited
 };
+
+void enqueue(struct queue *q, struct proc *p);
+void dequeue(struct queue *q);
+void delete (struct queue *q, int pid);
+struct proc *get_start(struct queue *q);
